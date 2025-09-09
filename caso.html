@@ -69,7 +69,7 @@
     <p>&copy; 2025 | Soluciones Migratorias</p>
   </footer>
 
-  <!-- Scripts -->
+  <!-- Scripts (SOLO este bloque fue actualizado) -->
   <script>
     // ====== Utilidades UI ======
     const statusBox = document.getElementById('status');
@@ -94,6 +94,7 @@
     const prefijo = 'IOE';
 
     // ====== Endpoints ======
+    // ⚠️ Asegúrate de usar tu URL de despliegue que termina en /exec (no /dev)
     const API_BASE = "https://script.google.com/macros/s/AKfycbwW4J7yXb5Vkd_SLJk_XEWTdOZ6cOYoQw1Y22LAujw22Vj0XcZeivFgqZKWKQ-mErTx/exec";
     const SHEET_URLS = {
       "IOE": `${API_BASE}?tab=casos`
@@ -124,13 +125,19 @@
       return `${dd}/${mm}/${yyyy}`;
     }
 
+    // ====== Fetch robusto ======
     async function fetchJSON(url){
       try{
-        const res = await fetch(url, { headers: { 'Accept':'application/json' }});
+        const res = await fetch(url, { method:'GET', headers: { 'Accept':'application/json' }});
         const text = await res.text();
+        if (!res.ok) {
+          // muestra detalle del error si lo hay
+          throw new Error(`HTTP ${res.status} - ${text.slice(0,160)}`);
+        }
         return JSON.parse(text);
       }catch(err){
-        showStatus(`Error conectando con la API: <code>${String(err)}</code>`);
+        console.error('fetchJSON error:', err);
+        showStatus(`Error conectando con la API: <code>${String(err.message || err)}</code>`);
         throw err;
       }
     }
@@ -198,19 +205,25 @@
       const baseUpdates = SHEET_UPDATES_URLS[prefijo]  || `${API_BASE}?tab=actualizaciones`;
 
       try{
+        // Log opcional para depuración
+        // console.log('[API casos] =>', baseCasos + "&codigo=" + encodeURIComponent(codigo));
         const casos = await fetchJSON(baseCasos + "&codigo=" + encodeURIComponent(codigo));
-        if(!casos || !casos.length){
+        const rowsCasos = Array.isArray(casos) ? casos : (casos && casos.rows) ? casos.rows : [];
+
+        if(!rowsCasos.length){
           document.getElementById('cliente-info').innerHTML = '<p>No se encontró el caso para este código.</p>';
           document.getElementById('corte-info').innerHTML = '';
           document.getElementById('updates-list').innerHTML = '';
           return;
         }
-        renderCliente(casos[0]);
+        renderCliente(rowsCasos[0]);
 
         const updates = await fetchJSON(baseUpdates + "&codigo=" + encodeURIComponent(codigo));
-        renderUpdates(updates || []);
+        const rowsUpdates = Array.isArray(updates) ? updates : (updates && updates.rows) ? updates.rows : [];
+        renderUpdates(rowsUpdates);
         showStatus('Código válido. Información cargada correctamente.', 'success');
       }catch(err){
+        console.error('cargarDatos error:', err);
         document.getElementById('cliente-info').innerHTML = '<p>Error al conectar con la hoja.</p>';
         document.getElementById('corte-info').innerHTML = '';
         document.getElementById('updates-list').innerHTML = '';
@@ -221,3 +234,4 @@
   </script>
 </body>
 </html>
+
