@@ -69,7 +69,7 @@
     <p>&copy; 2025 | Soluciones Migratorias</p>
   </footer>
 
-  <!-- Scripts (SOLO este bloque fue actualizado) -->
+  <!-- Scripts (solo este bloque fue modificado) -->
   <script>
     // ====== Utilidades UI ======
     const statusBox = document.getElementById('status');
@@ -82,26 +82,16 @@
 
     // ====== Lectura y validación del código ======
     const params = new URLSearchParams(location.search);
-
-    // Normaliza: mayúsculas, sin espacios ni símbolos
     const rawCodigo = params.get('codigo') || '';
     const codigo = rawCodigo.toUpperCase().replace(/[^A-Z0-9]/g,'').trim();
-
-    // Regla: IOE + 10 dígitos (total 13)
-    const CODE_RE = /^IOE\d{10}$/;
-
-    // Prefijo para ruteo por hoja (si en el futuro separas por prefijos)
+    const CODE_RE = /^IOE\d{10}$/;  // IOE + 10 dígitos
     const prefijo = 'IOE';
 
-    // ====== Endpoints ======
-    // ⚠️ Asegúrate de usar tu URL de despliegue que termina en /exec (no /dev)
-    const API_BASE = "https://script.google.com/macros/s/AKfycbxp0DwJl1haPzWqJ-Kre_8XfEETJfYDoeH13IICxw4eTqYBGplIkDHtPqHjhfwtQHiC/exec";
-    const SHEET_URLS = {
-      "IOE": `${API_BASE}?tab=casos`
-    };
-    const SHEET_UPDATES_URLS = {
-      "IOE": `${API_BASE}?tab=actualizaciones`
-    };
+    // ====== ENDPOINT: REEMPLAZA AQUÍ CON TU URL /exec MÁS RECIENTE ======
+    const API_BASE = "https://script.google.com/macros/s/AKfycbxp0DwJl1haPzWqJ-Kre_8XfEETJfYDoeH13IICxw4eTqYBGplIkDHtPqHjhfwtQHiC/exec"; // <-- PÉGALA AQUÍ
+
+    const SHEET_URLS = { "IOE": `${API_BASE}?tab=casos` };
+    const SHEET_UPDATES_URLS = { "IOE": `${API_BASE}?tab=actualizaciones` };
 
     // ====== Helpers de fecha ======
     function isDMYString(s){ return /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(s||'').trim()); }
@@ -125,19 +115,38 @@
       return `${dd}/${mm}/${yyyy}`;
     }
 
-    // ====== Fetch robusto ======
+    // ====== Fetch robusto con debug ======
     async function fetchJSON(url){
       try{
+        console.log('[FETCH] ->', url);
         const res = await fetch(url, { method:'GET', headers: { 'Accept':'application/json' }});
         const text = await res.text();
+        console.log('[FETCH][status]', res.status, res.statusText);
         if (!res.ok) {
-          // muestra detalle del error si lo hay
-          throw new Error(`HTTP ${res.status} - ${text.slice(0,160)}`);
+          console.error('[FETCH][body]', text);
+          showStatus(
+            `❌ Error API<br><small><strong>URL</strong>: <code>${url}</code><br>`+
+            `<strong>HTTP</strong>: ${res.status} ${res.statusText}<br>`+
+            `<strong>Body</strong>: <code>${text.slice(0,500)}</code></small>`
+          );
+          throw new Error(`HTTP ${res.status}`);
         }
-        return JSON.parse(text);
+        try {
+          const json = JSON.parse(text);
+          return json;
+        } catch(parseErr) {
+          console.error('[FETCH][parse error] body:', text);
+          showStatus(
+            `❌ Respuesta no es JSON válido<br><small><strong>URL</strong>: <code>${url}</code><br>`+
+            `<strong>Body</strong>: <code>${text.slice(0,500)}</code></small>`
+          );
+          throw parseErr;
+        }
       }catch(err){
         console.error('fetchJSON error:', err);
-        showStatus(`Error conectando con la API: <code>${String(err.message || err)}</code>`);
+        if (statusBox.style.display !== 'block') {
+          showStatus(`❌ Error conectando con la API: <code>${String(err.message || err)}</code>`);
+        }
         throw err;
       }
     }
@@ -185,15 +194,13 @@
     }
 
     async function cargarDatos(){
-      // Validación de presencia
+      // Validaciones de URL
       if(!codigo){
         showStatus('Falta el parámetro <strong>codigo</strong> en la URL. Ejemplo: <code>caso.html?codigo=IOE0324567831</code>');
         document.getElementById('case-details').style.display = 'none';
         document.getElementById('updates-list').innerHTML = '';
         return;
       }
-
-      // Validación de formato IOE + 10 dígitos
       if(!CODE_RE.test(codigo)){
         showStatus('El código no es válido. Debe tener el formato <strong>IOE</strong> seguido de <strong>10 dígitos</strong>. Ejemplo: <code>IOE0324567831</code>');
         document.getElementById('case-details').style.display = 'none';
@@ -201,15 +208,17 @@
         return;
       }
 
-      const baseCasos   = SHEET_URLS[prefijo]          || `${API_BASE}?tab=casos`;
-      const baseUpdates = SHEET_UPDATES_URLS[prefijo]  || `${API_BASE}?tab=actualizaciones`;
+      const baseCasos   = SHEET_URLS[prefijo]         || `${API_BASE}?tab=casos`;
+      const baseUpdates = SHEET_UPDATES_URLS[prefijo] || `${API_BASE}?tab=actualizaciones`;
+
+      // Debug visible: URL que se consulta
+      const urlDebug = `${baseCasos}&codigo=${encodeURIComponent(codigo)}`;
+      showStatus(`Consultando:<br><small><code>${urlDebug}</code></small>`, 'success');
 
       try{
-        // Log opcional para depuración
-        // console.log('[API casos] =>', baseCasos + "&codigo=" + encodeURIComponent(codigo));
-        const casos = await fetchJSON(baseCasos + "&codigo=" + encodeURIComponent(codigo));
+        // CASO
+        const casos = await fetchJSON(urlDebug);
         const rowsCasos = Array.isArray(casos) ? casos : (casos && casos.rows) ? casos.rows : [];
-
         if(!rowsCasos.length){
           document.getElementById('cliente-info').innerHTML = '<p>No se encontró el caso para este código.</p>';
           document.getElementById('corte-info').innerHTML = '';
@@ -218,7 +227,9 @@
         }
         renderCliente(rowsCasos[0]);
 
-        const updates = await fetchJSON(baseUpdates + "&codigo=" + encodeURIComponent(codigo));
+        // ACTUALIZACIONES
+        const urlUpdates = `${baseUpdates}&codigo=${encodeURIComponent(codigo)}`;
+        const updates = await fetchJSON(urlUpdates);
         const rowsUpdates = Array.isArray(updates) ? updates : (updates && updates.rows) ? updates.rows : [];
         renderUpdates(rowsUpdates);
         showStatus('Código válido. Información cargada correctamente.', 'success');
@@ -230,8 +241,7 @@
       }
     }
 
-    cargarDatos();
+    document.addEventListener('DOMContentLoaded', cargarDatos);
   </script>
 </body>
 </html>
-
