@@ -69,7 +69,7 @@
     <p>&copy; 2025 | Soluciones Migratorias</p>
   </footer>
 
-  <!-- Scripts (solo este bloque fue modificado) -->
+  <!-- Scripts -->
   <script>
     // ====== Utilidades UI ======
     const statusBox = document.getElementById('status');
@@ -82,18 +82,25 @@
 
     // ====== Lectura y validación del código ======
     const params = new URLSearchParams(location.search);
+
+    // Normaliza: mayúsculas, sin espacios ni símbolos
     const rawCodigo = params.get('codigo') || '';
     const codigo = rawCodigo.toUpperCase().replace(/[^A-Z0-9]/g,'').trim();
 
-    // CAMBIO 1: Regex tolerante (IOE opcional + 10 dígitos)
-    const CODE_RE = /^(?:IOE)?\d{10}$/;
+    // Regla: IOE + 10 dígitos (total 13)
+    const CODE_RE = /^IOE\d{10}$/;
+
+    // Prefijo para ruteo por hoja (si en el futuro separas por prefijos)
     const prefijo = 'IOE';
 
-    // ====== ENDPOINT: tu URL /exec actual ======
+    // ====== Endpoints ======
     const API_BASE = "https://script.google.com/macros/s/AKfycbxccI9PZsAKY6HKV7F9wh1TpKhRxm4gGgCQvheZyvBBGVxbR4Fopch2NOwIVAp7YzvI/exec";
-
-    const SHEET_URLS = { "IOE": `${API_BASE}?tab=casos` };
-    const SHEET_UPDATES_URLS = { "IOE": `${API_BASE}?tab=actualizaciones` };
+    const SHEET_URLS = {
+      "IOE": `${API_BASE}?tab=casos`
+    };
+    const SHEET_UPDATES_URLS = {
+      "IOE": `${API_BASE}?tab=actualizaciones`
+    };
 
     // ====== Helpers de fecha ======
     function isDMYString(s){ return /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(s||'').trim()); }
@@ -117,45 +124,13 @@
       return `${dd}/${mm}/${yyyy}`;
     }
 
-    // CAMBIO 2: Fetch robusto con anti-caché + debug visible
     async function fetchJSON(url){
       try{
-        const full = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-        console.log('[FETCH] ->', full);
-        if (statusBox) {
-          statusBox.style.display = 'block';
-          statusBox.classList.add('success');
-          statusBox.innerHTML = `Consultando:<br><code style="font-size:12px">${full}</code>`;
-        }
-
-        const res = await fetch(full, {
-          method:'GET',
-          headers: { 'Accept':'application/json' },
-          cache: 'no-store'
-        });
+        const res = await fetch(url, { headers: { 'Accept':'application/json' }});
         const text = await res.text();
-        console.log('[FETCH][status]', res.status, res.statusText);
-
-        if (!res.ok) {
-          console.error('[FETCH][body]', text);
-          (document.getElementById('updates-list')||document.body).innerHTML =
-            `<pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px">HTTP ${res.status}\n${text.slice(0,1000)}</pre>`;
-          throw new Error(`HTTP ${res.status}`);
-        }
-        try {
-          return JSON.parse(text);
-        } catch(parseErr) {
-          console.error('[FETCH][parse error] body:', text);
-          (document.getElementById('updates-list')||document.body).innerHTML =
-            `<pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px">Respuesta no JSON:\n${text.slice(0,1000)}</pre>`;
-          throw parseErr;
-        }
+        return JSON.parse(text);
       }catch(err){
-        console.error('fetchJSON error:', err);
-        if (statusBox && statusBox.style.display !== 'block') {
-          statusBox.style.display = 'block';
-          statusBox.innerHTML = `❌ Error conectando con la API: <code>${String(err.message || err)}</code>`;
-        }
+        showStatus(`Error conectando con la API: <code>${String(err)}</code>`);
         throw err;
       }
     }
@@ -195,7 +170,7 @@
               Ver actualización
             </summary>
             <div style="margin-top:8px; color:#333; line-height:1.6;">
-              ${u.nota ?? u.detalle ?? u.descripcion ?? '<em>Sin detalle</em>'}
+              ${u.nota ? u.nota : '<em>Sin detalle</em>'}
             </div>
           </details>
         </div>
@@ -203,51 +178,46 @@
     }
 
     async function cargarDatos(){
-      // Validaciones de URL
+      // Validación de presencia
       if(!codigo){
         showStatus('Falta el parámetro <strong>codigo</strong> en la URL. Ejemplo: <code>caso.html?codigo=IOE0324567831</code>');
         document.getElementById('case-details').style.display = 'none';
         document.getElementById('updates-list').innerHTML = '';
         return;
       }
+
+      // Validación de formato IOE + 10 dígitos
       if(!CODE_RE.test(codigo)){
-        showStatus('El código no es válido. Debe tener el formato <strong>IOE</strong> (opcional) seguido de <strong>10 dígitos</strong>. Ej.: <code>IOE0324567831</code> o <code>0324567831</code>');
+        showStatus('El código no es válido. Debe tener el formato <strong>IOE</strong> seguido de <strong>10 dígitos</strong>. Ejemplo: <code>IOE0324567831</code>');
         document.getElementById('case-details').style.display = 'none';
         document.getElementById('updates-list').innerHTML = '';
         return;
       }
 
-      const baseCasos   = SHEET_URLS[prefijo]         || `${API_BASE}?tab=casos`;
-      const baseUpdates = SHEET_UPDATES_URLS[prefijo] || `${API_BASE}?tab=actualizaciones`;
+      const baseCasos   = SHEET_URLS[prefijo]          || `${API_BASE}?tab=casos`;
+      const baseUpdates = SHEET_UPDATES_URLS[prefijo]  || `${API_BASE}?tab=actualizaciones`;
 
       try{
-        // CASO
-        const urlCaso = `${baseCasos}&codigo=${encodeURIComponent(codigo)}`;
-        const casos = await fetchJSON(urlCaso);
-        const rowsCasos = Array.isArray(casos) ? casos : (casos && casos.rows) ? casos.rows : [];
-        if(!rowsCasos.length){
+        const casos = await fetchJSON(baseCasos + "&codigo=" + encodeURIComponent(codigo));
+        if(!casos || !casos.length){
           document.getElementById('cliente-info').innerHTML = '<p>No se encontró el caso para este código.</p>';
           document.getElementById('corte-info').innerHTML = '';
           document.getElementById('updates-list').innerHTML = '';
           return;
         }
-        renderCliente(rowsCasos[0]);
+        renderCliente(casos[0]);
 
-        // ACTUALIZACIONES
-        const urlUpdates = `${baseUpdates}&codigo=${encodeURIComponent(codigo)}`;
-        const updates = await fetchJSON(urlUpdates);
-        const rowsUpdates = Array.isArray(updates) ? updates : (updates && updates.rows) ? updates.rows : [];
-        renderUpdates(rowsUpdates);
+        const updates = await fetchJSON(baseUpdates + "&codigo=" + encodeURIComponent(codigo));
+        renderUpdates(updates || []);
         showStatus('Código válido. Información cargada correctamente.', 'success');
       }catch(err){
-        console.error('cargarDatos error:', err);
         document.getElementById('cliente-info').innerHTML = '<p>Error al conectar con la hoja.</p>';
         document.getElementById('corte-info').innerHTML = '';
         document.getElementById('updates-list').innerHTML = '';
       }
     }
 
-    document.addEventListener('DOMContentLoaded', cargarDatos);
+    cargarDatos();
   </script>
 </body>
 </html>
