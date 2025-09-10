@@ -84,11 +84,13 @@
     const params = new URLSearchParams(location.search);
     const rawCodigo = params.get('codigo') || '';
     const codigo = rawCodigo.toUpperCase().replace(/[^A-Z0-9]/g,'').trim();
-    const CODE_RE = /^IOE\d{10}$/;  // IOE + 10 dígitos
+
+    // CAMBIO 1: Regex tolerante (IOE opcional + 10 dígitos)
+    const CODE_RE = /^(?:IOE)?\d{10}$/;
     const prefijo = 'IOE';
 
-    // ====== ENDPOINT: REEMPLAZA AQUÍ CON TU URL /exec MÁS RECIENTE ======
-    const API_BASE = "https://script.google.com/macros/s/AKfycbxp0DwJl1haPzWqJ-Kre_8XfEETJfYDoeH13IICxw4eTqYBGplIkDHtPqHjhfwtQHiC/exec"; // <-- PÉGALA AQUÍ
+    // ====== ENDPOINT: tu URL /exec actual ======
+    const API_BASE = "https://script.google.com/macros/s/AKfycbxp0DwJl1haPzWqJ-Kre_8XfEETJfYDoeH13IICxw4eTqYBGplIkDHtPqHjhfwtQHiC/exec";
 
     const SHEET_URLS = { "IOE": `${API_BASE}?tab=casos` };
     const SHEET_UPDATES_URLS = { "IOE": `${API_BASE}?tab=actualizaciones` };
@@ -115,37 +117,44 @@
       return `${dd}/${mm}/${yyyy}`;
     }
 
-    // ====== Fetch robusto con debug ======
+    // CAMBIO 2: Fetch robusto con anti-caché + debug visible
     async function fetchJSON(url){
       try{
-        console.log('[FETCH] ->', url);
-        const res = await fetch(url, { method:'GET', headers: { 'Accept':'application/json' }});
+        const full = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+        console.log('[FETCH] ->', full);
+        if (statusBox) {
+          statusBox.style.display = 'block';
+          statusBox.classList.add('success');
+          statusBox.innerHTML = `Consultando:<br><code style="font-size:12px">${full}</code>`;
+        }
+
+        const res = await fetch(full, {
+          method:'GET',
+          headers: { 'Accept':'application/json' },
+          cache: 'no-store'
+        });
         const text = await res.text();
         console.log('[FETCH][status]', res.status, res.statusText);
+
         if (!res.ok) {
           console.error('[FETCH][body]', text);
-          showStatus(
-            `❌ Error API<br><small><strong>URL</strong>: <code>${url}</code><br>`+
-            `<strong>HTTP</strong>: ${res.status} ${res.statusText}<br>`+
-            `<strong>Body</strong>: <code>${text.slice(0,500)}</code></small>`
-          );
+          (document.getElementById('updates-list')||document.body).innerHTML =
+            `<pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px">HTTP ${res.status}\n${text.slice(0,1000)}</pre>`;
           throw new Error(`HTTP ${res.status}`);
         }
         try {
-          const json = JSON.parse(text);
-          return json;
+          return JSON.parse(text);
         } catch(parseErr) {
           console.error('[FETCH][parse error] body:', text);
-          showStatus(
-            `❌ Respuesta no es JSON válido<br><small><strong>URL</strong>: <code>${url}</code><br>`+
-            `<strong>Body</strong>: <code>${text.slice(0,500)}</code></small>`
-          );
+          (document.getElementById('updates-list')||document.body).innerHTML =
+            `<pre style="white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px">Respuesta no JSON:\n${text.slice(0,1000)}</pre>`;
           throw parseErr;
         }
       }catch(err){
         console.error('fetchJSON error:', err);
-        if (statusBox.style.display !== 'block') {
-          showStatus(`❌ Error conectando con la API: <code>${String(err.message || err)}</code>`);
+        if (statusBox && statusBox.style.display !== 'block') {
+          statusBox.style.display = 'block';
+          statusBox.innerHTML = `❌ Error conectando con la API: <code>${String(err.message || err)}</code>`;
         }
         throw err;
       }
@@ -186,7 +195,7 @@
               Ver actualización
             </summary>
             <div style="margin-top:8px; color:#333; line-height:1.6;">
-              ${u.nota ? u.nota : '<em>Sin detalle</em>'}
+              ${u.nota ?? u.detalle ?? u.descripcion ?? '<em>Sin detalle</em>'}
             </div>
           </details>
         </div>
@@ -202,7 +211,7 @@
         return;
       }
       if(!CODE_RE.test(codigo)){
-        showStatus('El código no es válido. Debe tener el formato <strong>IOE</strong> seguido de <strong>10 dígitos</strong>. Ejemplo: <code>IOE0324567831</code>');
+        showStatus('El código no es válido. Debe tener el formato <strong>IOE</strong> (opcional) seguido de <strong>10 dígitos</strong>. Ej.: <code>IOE0324567831</code> o <code>0324567831</code>');
         document.getElementById('case-details').style.display = 'none';
         document.getElementById('updates-list').innerHTML = '';
         return;
@@ -211,13 +220,10 @@
       const baseCasos   = SHEET_URLS[prefijo]         || `${API_BASE}?tab=casos`;
       const baseUpdates = SHEET_UPDATES_URLS[prefijo] || `${API_BASE}?tab=actualizaciones`;
 
-      // Debug visible: URL que se consulta
-      const urlDebug = `${baseCasos}&codigo=${encodeURIComponent(codigo)}`;
-      showStatus(`Consultando:<br><small><code>${urlDebug}</code></small>`, 'success');
-
       try{
         // CASO
-        const casos = await fetchJSON(urlDebug);
+        const urlCaso = `${baseCasos}&codigo=${encodeURIComponent(codigo)}`;
+        const casos = await fetchJSON(urlCaso);
         const rowsCasos = Array.isArray(casos) ? casos : (casos && casos.rows) ? casos.rows : [];
         if(!rowsCasos.length){
           document.getElementById('cliente-info').innerHTML = '<p>No se encontró el caso para este código.</p>';
